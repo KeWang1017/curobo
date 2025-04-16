@@ -41,6 +41,12 @@ cuRobo performs trajectory optimization across many seeds in parallel to find a 
 <img width="500" src="images/rrt_compare.gif">
 </p>
 
+## Mujoco Simulation
+`cd examples/franka_sim`
+Follow the README there to install the mujoco simulation of franka robot
+
+## Run Test
+`python examples/test_curobo_mujoco.py`
 
 ## Citation
 
