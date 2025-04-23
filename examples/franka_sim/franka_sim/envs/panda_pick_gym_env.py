@@ -42,7 +42,7 @@ _HERE = Path(__file__).parent
 _XML_PATH = _HERE / "xmls" / "arena.xml"
 _PANDA_HOME = np.asarray((0, -0.785, 0, -2.35, 0, 1.57, np.pi / 4))
 _CARTESIAN_BOUNDS = np.asarray([[0.2, -0.3, 0], [0.6, 0.3, 0.5]])
-_SAMPLING_BOUNDS = np.asarray([[0.1, -0.35], [0.7, 0.35]])
+_SAMPLING_BOUNDS = np.asarray([[0.15, -0.3], [0.65, 0.3]])
 
 
 class PandaPickCubeGymEnv(MujocoGymEnv):
@@ -208,7 +208,7 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
             info: dict[str, Any]
         """
         # change to absolute pose
-        x, y, z, quat_x, quat_y, quat_z, quat_w, grasp = action
+        x, y, z, quat_w, quat_x, quat_y, quat_z, grasp = action
 
         # Set the mocap position.
         # pos = self._data.mocap_pos[0].copy()

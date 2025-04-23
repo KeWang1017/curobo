@@ -38,51 +38,66 @@ motion_gen_config = MotionGenConfig.load_from_robot_config(
     interpolation_dt=DT,
     # trajopt_dt=0.15,
     # velocity_scale=0.1,
-    use_cuda_graph=True,
-    # finetune_dt_scale=2.5,
-    interpolation_steps=10000,
+    # collision_checker_type=CollisionCheckerType.PRIMITIVE,
+    # use_cuda_graph=True,
+    # num_trajopt_seeds=12,
+    # num_graph_seeds=1,
+    # num_ik_seeds=30,
 )
 
 motion_gen = MotionGen(motion_gen_config)
-motion_gen.warmup()
+motion_gen.warmup(parallel_finetune=True)
 
-def demo_motion_gen(js=False, start_joint_state=None, goal_pose=None):
-    goal_pose = Pose.from_list(goal_pose)  # x, y, z, qw, qx, qy, qz
+def demo_motion_gen(start_joint_state=None, goal_pose=None):
     start_state = JointState.from_position(
-        torch.tensor(start_joint_state).view(1, -1)
+        torch.tensor(start_joint_state).view(1, -1).cuda()
     )
+    # make the goal state a bit higher than cube
+    goal_pose[2] += 0.1
+    start_pose = kin_model.get_state(torch.tensor(start_joint_state).view(1, -1).cuda())
+    # breakpoint()
+    intermediate_pose_1 =  np.concatenate([(start_pose.ee_position.squeeze().cpu().numpy() + goal_pose[:3]) / 2, goal_pose[3:]])# x, y, z, qw, qx, qy, qz
+    from copy import deepcopy
+    intermediate_pose_2 = deepcopy(goal_pose)
+    intermediate_pose_2[2] += 0.2
+
+    pose_list = [intermediate_pose_1, intermediate_pose_2,  goal_pose] # 
+    trajectory = start_state
+    for i, pose in enumerate(pose_list):
+        goal_pose = Pose.from_list(pose)  # x, y, z, qw, qx, qy, qz
+        start_state = trajectory[-1].unsqueeze(0).clone()
+        start_state.velocity[:] = 0.0
+        start_state.acceleration[:] = 0.0
+        result = motion_gen.plan_single(
+            start_state.clone(),
+            goal_pose,
+            plan_config=MotionGenPlanConfig(parallel_finetune=True, max_attempts=1, time_dilation_factor=1.0),
+        )
+        if result.success.item():
+            plan = result.get_interpolated_plan()
+            trajectory = trajectory.stack(plan.clone())
+            # motion_time += result.motion_time
+        else:
+            print(i, "fail", result.status)
+    # breakpoint()
+    # goal_pose = Pose.from_list(goal_pose)  # x, y, z, qw, qx, qy, qz
     # motion_gen.warmup(enable_graph=True, warmup_js_trajopt=js, parallel_finetune=True)
     # robot_cfg = load_yaml(join_path(get_robot_configs_path(), robot_file))["robot_cfg"]
     # robot_cfg = RobotConfig.from_dict(robot_cfg, tensor_args)
-    retract_cfg = motion_gen.get_retract_config()
-    state = motion_gen.rollout_fn.compute_kinematics(
-        JointState.from_position(retract_cfg.view(1, -1))
-    )
-
-    # retract_pose = Pose(state.ee_pos_seq.squeeze(), quaternion=state.ee_quat_seq.squeeze())
-    start_state = JointState.from_position(retract_cfg.view(1, -1))
-    goal_state = goal_pose
-
-    # start_state.position[0, 0] += 0.25
-    goal_state.position[0,2] += 0.1
-    if js:
-        result = motion_gen.plan_single_js(
-            start_state,
-            goal_pose,
-            MotionGenPlanConfig(max_attempts=1, time_dilation_factor=1.0),
-        )
-    else:
-        result = motion_gen.plan_single(
-            start_state,
-            goal_pose,
-            MotionGenPlanConfig(
-                max_attempts=1,
-                timeout=5,
-                time_dilation_factor=1.0,
-            ),
-        )
+    # breakpoint()
+    # goal_state = goal_pose
+    # result = motion_gen.plan_single(
+    #     start_state,
+    #     goal_state,
+    #     MotionGenPlanConfig(
+    #             max_attempts=1,
+    #             timeout=5,
+    #             time_dilation_factor=1.0,
+    #         ),
+    #     )
+    # retime the trajectory
     # new_result = result.clone()
-    # new_result.retime_trajectory(0.5, create_interpolation_buffer=True)
+    # new_result.retime_trajectory(0.8, create_interpolation_buffer=True)
     # print(new_result.optimized_dt, new_result.motion_time, result.motion_time)
     # print(
     #     "Trajectory Generated: ",
@@ -91,42 +106,31 @@ def demo_motion_gen(js=False, start_joint_state=None, goal_pose=None):
     #     result.status,
     #     result.optimized_dt,
     # )
-    traj = result.get_interpolated_plan()
-    q = torch.tensor(traj.position, **(tensor_args.as_torch_dict()))
+    # traj = result.get_interpolated_plan()
+    # breakpoint()
+    q = torch.tensor(trajectory.position, **(tensor_args.as_torch_dict()))
     out = kin_model.get_state(q)
 
     return out
 
-# def sample():
-#     a = np.random.uniform(action_spec.low, action_spec.high, action_spec.shape)
-#     return a.astype(action_spec.dtype)
 
+def motion_gen_block():
+    obs, _ = env.reset()
+    block_pos = obs["state"]["block_pos"]
+    block_quat = obs["state"]["block_quat"]
+    # breakpoint()
+    goal_pose = np.concatenate([block_pos, block_quat])
+    init_joint_state = obs["state"]["joint_pos"]
+    start_time = time.perf_counter()
+    traj = demo_motion_gen(start_joint_state=init_joint_state, goal_pose=goal_pose)
+    print("Time to generate trajectory: ", time.perf_counter() - start_time)
+    pos = traj.ee_position.squeeze().cpu().numpy()
+    quat = traj.ee_quaternion.squeeze().cpu().numpy()
+    gripper = np.zeros((len(quat), 1))
+    actions = np.concatenate([pos, quat, gripper], axis=1)
+    return actions
 
-m = env.model
-d = env.data
-
-key_reset = False
-KEY_SPACE = 32
-
-
-def key_callback(keycode):
-    if keycode == KEY_SPACE:
-        global key_reset
-        key_reset = True
-
-
-obs, _ = env.reset()
-block_pos = obs["state"]["block_pos"]
-block_quat = obs["state"]["block_quat"]
-goal_pose = np.concatenate([block_pos, block_quat])
-init_joint_state = obs["state"]["joint_pos"]
-
-traj = demo_motion_gen(js=False, start_joint_state=init_joint_state, goal_pose=goal_pose)
-pos = traj.ee_position.squeeze().cpu().numpy()
-quat = traj.ee_quaternion.squeeze().cpu().numpy()
-gripper = np.zeros((len(quat), 1))
-actions = np.concatenate([pos, quat, gripper], axis=1)
-# breakpoint()
+actions = motion_gen_block()
 # Create the viewer
 viewer = MujocoViewer(env.unwrapped.model, env.unwrapped.data)
 with viewer as viewer:
@@ -141,17 +145,10 @@ with viewer as viewer:
             if time_until_next_step > 0:
                 time.sleep(time_until_next_step)
             if i >= len(actions) - 1:
-                obs, _ = env.reset()
                 block_pos = obs["state"]["block_pos"]
-                block_quat = obs["state"]["block_quat"]
-                goal_pose = np.concatenate([block_pos, block_quat])
-                init_joint_state = obs["state"]["joint_pos"]
-                start_time = time.perf_counter()
-                traj = demo_motion_gen(js=False, start_joint_state=init_joint_state, goal_pose=goal_pose)
-                print("Time to generate trajectory: ", time.perf_counter() - start_time)
-                pos = traj.ee_position.squeeze().cpu().numpy()
-                quat = traj.ee_quaternion.squeeze().cpu().numpy()
-                gripper = np.zeros((len(quat), 1))
-                actions = np.concatenate([pos, quat, gripper], axis=1)
+                block_pos[2] += 0.1
+                ee_pos = obs["state"]["tcp_pose"][:3]
+                print("error_pos: ", np.linalg.norm(block_pos - ee_pos))
+                actions = motion_gen_block()
 
 

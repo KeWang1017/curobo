@@ -205,7 +205,7 @@ def demo_motion_gen(js=False):
     state = motion_gen.rollout_fn.compute_kinematics(
         JointState.from_position(retract_cfg.view(1, -1))
     )
-
+    breakpoint()
     retract_pose = Pose(state.ee_pos_seq.squeeze(), quaternion=state.ee_quat_seq.squeeze())
     start_state = JointState.from_position(retract_cfg.view(1, -1))
     goal_state = start_state.clone()
@@ -483,10 +483,10 @@ def demo_motion_gen_batch_env(n_envs: int = 10):
 
 if __name__ == "__main__":
     setup_curobo_logger("error")
-    demo_motion_gen(js=False)
+    # demo_motion_gen(js=False)
     # demo_motion_gen_simple()
     # demo_motion_gen_batch()
-    # demo_motion_gen_goalset()
+    demo_motion_gen_goalset()
     # n = [2, 10]
     # for n_envs in n:
     #    demo_motion_gen_batch_env(n_envs=n_envs)
