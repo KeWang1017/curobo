@@ -20,6 +20,27 @@ from curobo.cuda_robot_model.cuda_robot_model import CudaRobotModel
 from curobo.util_file import get_robot_path, join_path, load_yaml
 from curobo.wrap.reacher.motion_gen import MotionGen, MotionGenConfig, MotionGenPlanConfig
 
+
+def plot_traj(trajectory, dt, file_name="test.png"):
+    # Third Party
+    import matplotlib.pyplot as plt
+
+    _, axs = plt.subplots(4, 1)
+    q = trajectory.position.cpu().numpy()
+    qd = trajectory.velocity.cpu().numpy()
+    qdd = trajectory.acceleration.cpu().numpy()
+    qddd = trajectory.jerk.cpu().numpy()
+    timesteps = [i * dt for i in range(q.shape[0])]
+    for i in range(q.shape[-1]):
+        axs[0].plot(timesteps, q[:, i], label=str(i))
+        axs[1].plot(timesteps, qd[:, i], label=str(i))
+        axs[2].plot(timesteps, qdd[:, i], label=str(i))
+        axs[3].plot(timesteps, qddd[:, i], label=str(i))
+
+    plt.legend()
+    plt.savefig(file_name)
+    plt.close()
+
 _PANDA_HOME = np.asarray((0, -0.785, 0, -2.35, 0, 1.57, np.pi / 4))
 DT = 0.02
 env = envs.PandaPickCubeGymEnv(render_mode="human", action_scale=(0.1, 1))
@@ -36,6 +57,13 @@ motion_gen_config = MotionGenConfig.load_from_robot_config(
     None,
     tensor_args,
     interpolation_dt=DT,
+    velocity_scale=1.0, # used when generating slow trajectories
+    # used for non-zero start velocity and acceleration
+    trajopt_tsteps = 36,
+    trajopt_dt = 0.05,
+    optimize_dt = False,
+    # max_attemtps = 1,
+    trim_steps = [1, None]
     # trajopt_dt=0.15,
     # velocity_scale=0.1,
     # collision_checker_type=CollisionCheckerType.PRIMITIVE,
@@ -66,8 +94,8 @@ def demo_motion_gen(start_joint_state=None, goal_pose=None):
     for i, pose in enumerate(pose_list):
         goal_pose = Pose.from_list(pose)  # x, y, z, qw, qx, qy, qz
         start_state = trajectory[-1].unsqueeze(0).clone()
-        start_state.velocity[:] = 0.0
-        start_state.acceleration[:] = 0.0
+        start_state.velocity[:] = 0.2
+        start_state.acceleration[:] = 4.0
         result = motion_gen.plan_single(
             start_state.clone(),
             goal_pose,
@@ -79,6 +107,7 @@ def demo_motion_gen(start_joint_state=None, goal_pose=None):
             # motion_time += result.motion_time
         else:
             print(i, "fail", result.status)
+    
     # breakpoint()
     # goal_pose = Pose.from_list(goal_pose)  # x, y, z, qw, qx, qy, qz
     # motion_gen.warmup(enable_graph=True, warmup_js_trajopt=js, parallel_finetune=True)
@@ -108,6 +137,7 @@ def demo_motion_gen(start_joint_state=None, goal_pose=None):
     # )
     # traj = result.get_interpolated_plan()
     # breakpoint()
+    print(trajectory.position.shape[0])
     q = torch.tensor(trajectory.position, **(tensor_args.as_torch_dict()))
     out = kin_model.get_state(q)
 
