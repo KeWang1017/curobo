@@ -59,11 +59,11 @@ motion_gen_config = MotionGenConfig.load_from_robot_config(
     interpolation_dt=DT,
     velocity_scale=1.0, # used when generating slow trajectories
     # used for non-zero start velocity and acceleration
-    trajopt_tsteps = 36,
-    trajopt_dt = 0.05,
-    optimize_dt = False,
-    # max_attemtps = 1,
-    trim_steps = [1, None]
+    # trajopt_tsteps = 36,
+    # trajopt_dt = 0.05,
+    # optimize_dt = False,
+    # # max_attemtps = 1,
+    # trim_steps = [1, None]
     # trajopt_dt=0.15,
     # velocity_scale=0.1,
     # collision_checker_type=CollisionCheckerType.PRIMITIVE,
@@ -76,7 +76,7 @@ motion_gen_config = MotionGenConfig.load_from_robot_config(
 motion_gen = MotionGen(motion_gen_config)
 motion_gen.warmup(parallel_finetune=True)
 
-def demo_motion_gen(start_joint_state=None, goal_pose=None):
+def demo_motion_gen_multi_segment(start_joint_state=None, goal_pose=None):
     start_state = JointState.from_position(
         torch.tensor(start_joint_state).view(1, -1).cuda()
     )
@@ -94,8 +94,8 @@ def demo_motion_gen(start_joint_state=None, goal_pose=None):
     for i, pose in enumerate(pose_list):
         goal_pose = Pose.from_list(pose)  # x, y, z, qw, qx, qy, qz
         start_state = trajectory[-1].unsqueeze(0).clone()
-        start_state.velocity[:] = 0.2
-        start_state.acceleration[:] = 4.0
+        start_state.velocity[:] = 0.0 # 0.2
+        start_state.acceleration[:] = 0.0 # 4.0
         result = motion_gen.plan_single(
             start_state.clone(),
             goal_pose,
@@ -141,8 +141,34 @@ def demo_motion_gen(start_joint_state=None, goal_pose=None):
     q = torch.tensor(trajectory.position, **(tensor_args.as_torch_dict()))
     out = kin_model.get_state(q)
 
-    return out
+    return out 
 
+def demo_motion_gen_single_segment(start_joint_state=None, goal_pose=None):
+    start_state = JointState.from_position(
+        torch.tensor(start_joint_state).view(1, -1).cuda()
+    )
+    # make the goal state a bit higher than cube
+    goal_pose[2] += 0.1
+    goal_pose = Pose.from_list(goal_pose)
+    start_pose = kin_model.get_state(torch.tensor(start_joint_state).view(1, -1).cuda())
+    # motion_gen.warmup(enable_graph=True, warmup_js_trajopt=js, parallel_finetune=True)
+    # goal_state = goal_pose
+
+    # start_state.position[0, 0] += 0.25
+    result = motion_gen.plan_single(
+        start_state,
+        goal_pose,
+        MotionGenPlanConfig(
+            max_attempts=1,
+            timeout=5,
+            time_dilation_factor=1.0,
+        ),
+    )
+    traj = result.get_interpolated_plan()
+    q = torch.tensor(traj.position, **(tensor_args.as_torch_dict()))
+    out = kin_model.get_state(q)
+
+    return out
 
 def motion_gen_block():
     obs, _ = env.reset()
@@ -152,33 +178,44 @@ def motion_gen_block():
     goal_pose = np.concatenate([block_pos, block_quat])
     init_joint_state = obs["state"]["joint_pos"]
     start_time = time.perf_counter()
-    traj = demo_motion_gen(start_joint_state=init_joint_state, goal_pose=goal_pose)
+    traj = demo_motion_gen_multi_segment(start_joint_state=init_joint_state, goal_pose=goal_pose)
     print("Time to generate trajectory: ", time.perf_counter() - start_time)
+    time_spend.append(time.perf_counter() - start_time)
     pos = traj.ee_position.squeeze().cpu().numpy()
     quat = traj.ee_quaternion.squeeze().cpu().numpy()
     gripper = np.zeros((len(quat), 1))
     actions = np.concatenate([pos, quat, gripper], axis=1)
     return actions
 
+counter = 0
+time_spend = []
+error_pos = []
 actions = motion_gen_block()
 # Create the viewer
 viewer = MujocoViewer(env.unwrapped.model, env.unwrapped.data)
-with viewer as viewer:
-    start = time.time()
-    while viewer.is_running():
-        for i, cmd in enumerate(actions):
-            step_start = time.time()
-            obs, rew, terminated, truncated, info = env.step(cmd)
-            # print(obs)
-            viewer.sync()
-            time_until_next_step = env.control_dt - (time.time() - step_start)
-            if time_until_next_step > 0:
-                time.sleep(time_until_next_step)
-            if i >= len(actions) - 1:
-                block_pos = obs["state"]["block_pos"]
-                block_pos[2] += 0.1
-                ee_pos = obs["state"]["tcp_pose"][:3]
-                print("error_pos: ", np.linalg.norm(block_pos - ee_pos))
-                actions = motion_gen_block()
-
+# with viewer as viewer:
+start = time.time()
+    # while viewer.is_running():
+while True: 
+    for i, cmd in enumerate(actions):
+        step_start = time.time()
+        obs, rew, terminated, truncated, info = env.step(cmd)
+        # print(obs)
+        # viewer.sync()
+        time_until_next_step = env.control_dt - (time.time() - step_start)
+    if time_until_next_step > 0:
+        time.sleep(time_until_next_step)
+    if i >= len(actions) - 1:
+        block_pos = obs["state"]["block_pos"]
+        block_pos[2] += 0.1
+        ee_pos = obs["state"]["tcp_pose"][:3]
+        error = np.linalg.norm(block_pos - ee_pos)
+        print("error_pos: ", error)
+        error_pos.append(error)
+        actions = motion_gen_block()
+        counter += 1
+        if counter > 50:
+            print("time_spend: ", np.mean(time_spend), np.std(time_spend))
+            print("error_pos: ", np.mean(error_pos), np.std(error_pos))
+            break
 
