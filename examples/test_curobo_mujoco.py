@@ -33,6 +33,8 @@ def plot_traj(trajectory, dt, file_name="test.png"):
     timesteps = [i * dt for i in range(q.shape[0])]
     for i in range(q.shape[-1]):
         axs[0].plot(timesteps, q[:, i], label=str(i))
+        # add two lines to plot the joint limits
+        axs[0].plot([0, q.shape[0] * dt], [robot_cfg.joint_limits[0], robot_cfg.joint_limits[0]], "k--")
         axs[1].plot(timesteps, qd[:, i], label=str(i))
         axs[2].plot(timesteps, qdd[:, i], label=str(i))
         axs[3].plot(timesteps, qddd[:, i], label=str(i))
@@ -50,6 +52,7 @@ world_file = "collision_table.yml"
 robot_file = "franka.yml"
 config_file = load_yaml(join_path(get_robot_path(), robot_file))["robot_cfg"]
 robot_cfg = RobotConfig.from_dict(config_file, tensor_args)
+breakpoint()
 kin_model = CudaRobotModel(robot_cfg.kinematics)
 motion_gen_config = MotionGenConfig.load_from_robot_config(
     robot_file,
@@ -138,9 +141,9 @@ def demo_motion_gen_multi_segment(start_joint_state=None, goal_pose=None):
     # breakpoint()
     print(trajectory.position.shape[0])
     q = torch.tensor(trajectory.position, **(tensor_args.as_torch_dict()))
-    out = kin_model.get_state(q)
+    task_space_traj = kin_model.get_state(q)
 
-    return out 
+    return task_space_traj, trajectory 
 
 def demo_motion_gen_single_segment(start_joint_state=None, goal_pose=None):
     start_state = JointState.from_position(
@@ -165,9 +168,9 @@ def demo_motion_gen_single_segment(start_joint_state=None, goal_pose=None):
     )
     traj = result.get_interpolated_plan()
     q = torch.tensor(traj.position, **(tensor_args.as_torch_dict()))
-    out = kin_model.get_state(q)
+    task_space_traj = kin_model.get_state(q)
 
-    return out
+    return task_space_traj, traj
 
 def motion_gen_block(x, y):
     obs, _ = env.reset(x=x, y=y)
@@ -176,16 +179,17 @@ def motion_gen_block(x, y):
     goal_pose = np.concatenate([block_pos, block_quat])
     init_joint_state = obs["state"]["joint_pos"]
     start_time = time.perf_counter()
-    traj = demo_motion_gen_multi_segment(start_joint_state=init_joint_state, goal_pose=goal_pose)
+    task_space_traj, traj = demo_motion_gen_multi_segment(start_joint_state=init_joint_state, goal_pose=goal_pose)
     print("Time to generate trajectory: ", time.perf_counter() - start_time)
+    file_name = f"traj_{x}_{y}.png"
+    plot_traj(traj, DT, file_name)
     time_spend.append(time.perf_counter() - start_time)
-    pos = traj.ee_position.squeeze().cpu().numpy()
-    quat = traj.ee_quaternion.squeeze().cpu().numpy()
+    pos = task_space_traj.ee_position.squeeze().cpu().numpy()
+    quat = task_space_traj.ee_quaternion.squeeze().cpu().numpy()
     gripper = np.zeros((len(quat), 1))
     actions = np.concatenate([pos, quat, gripper], axis=1)
     return actions
 
-counter = 0
 time_spend = []
 error_pos = []
 actions = motion_gen_block(0, 0)
@@ -212,9 +216,8 @@ with viewer as viewer:
                     print("error_pos: ", error)
                     error_pos.append(error)
                     actions = motion_gen_block(x, y)
-                    counter += 1
-                    if x == 4 and y == 4:
+                    if x == 1.0 and y == 1.0:
                         print("time_spend: ", np.mean(time_spend), np.std(time_spend))
                         print("error_pos: ", np.mean(error_pos), np.std(error_pos))
-                        break
+                        exit()
 
