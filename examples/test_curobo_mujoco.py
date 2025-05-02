@@ -59,11 +59,11 @@ motion_gen_config = MotionGenConfig.load_from_robot_config(
     interpolation_dt=DT,
     velocity_scale=1.0, # used when generating slow trajectories
     # used for non-zero start velocity and acceleration
-    # trajopt_tsteps = 36,
-    # trajopt_dt = 0.05,
-    # optimize_dt = False,
-    # # max_attemtps = 1,
-    # trim_steps = [1, None]
+    trajopt_tsteps = 36,
+    trajopt_dt = 0.05,
+    optimize_dt = False,
+    # max_attemtps = 1,
+    trim_steps = [1, None]
     # trajopt_dt=0.15,
     # velocity_scale=0.1,
     # collision_checker_type=CollisionCheckerType.PRIMITIVE,
@@ -94,8 +94,8 @@ def demo_motion_gen_multi_segment(start_joint_state=None, goal_pose=None):
     for i, pose in enumerate(pose_list):
         goal_pose = Pose.from_list(pose)  # x, y, z, qw, qx, qy, qz
         start_state = trajectory[-1].unsqueeze(0).clone()
-        start_state.velocity[:] = 0.0 # 0.2
-        start_state.acceleration[:] = 0.0 # 4.0
+        # start_state.velocity[:] = 0.0
+        # start_state.acceleration[:] = 0.0
         result = motion_gen.plan_single(
             start_state.clone(),
             goal_pose,
@@ -193,29 +193,29 @@ error_pos = []
 actions = motion_gen_block()
 # Create the viewer
 viewer = MujocoViewer(env.unwrapped.model, env.unwrapped.data)
-# with viewer as viewer:
-start = time.time()
-    # while viewer.is_running():
-while True: 
-    for i, cmd in enumerate(actions):
-        step_start = time.time()
-        obs, rew, terminated, truncated, info = env.step(cmd)
-        # print(obs)
-        # viewer.sync()
-        time_until_next_step = env.control_dt - (time.time() - step_start)
-    if time_until_next_step > 0:
-        time.sleep(time_until_next_step)
-    if i >= len(actions) - 1:
-        block_pos = obs["state"]["block_pos"]
-        block_pos[2] += 0.1
-        ee_pos = obs["state"]["tcp_pose"][:3]
-        error = np.linalg.norm(block_pos - ee_pos)
-        print("error_pos: ", error)
-        error_pos.append(error)
-        actions = motion_gen_block()
-        counter += 1
-        if counter > 50:
-            print("time_spend: ", np.mean(time_spend), np.std(time_spend))
-            print("error_pos: ", np.mean(error_pos), np.std(error_pos))
-            break
+with viewer as viewer:
+    start = time.time()
+    while viewer.is_running():
+# while True: 
+        for i, cmd in enumerate(actions):
+            step_start = time.time()
+            obs, rew, terminated, truncated, info = env.step(cmd)
+            # print(obs)
+            viewer.sync()
+            time_until_next_step = env.control_dt - (time.time() - step_start)
+        if time_until_next_step > 0:
+            time.sleep(time_until_next_step)
+        if i >= len(actions) - 1:
+            block_pos = obs["state"]["block_pos"]
+            block_pos[2] += 0.1
+            ee_pos = obs["state"]["tcp_pose"][:3]
+            error = np.linalg.norm(block_pos - ee_pos)
+            print("error_pos: ", error)
+            error_pos.append(error)
+            actions = motion_gen_block()
+            counter += 1
+            if counter > 50:
+                print("time_spend: ", np.mean(time_spend), np.std(time_spend))
+                print("error_pos: ", np.mean(error_pos), np.std(error_pos))
+                break
 
