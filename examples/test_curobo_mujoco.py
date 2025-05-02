@@ -41,7 +41,6 @@ def plot_traj(trajectory, dt, file_name="test.png"):
     plt.savefig(file_name)
     plt.close()
 
-_PANDA_HOME = np.asarray((0, -0.785, 0, -2.35, 0, 1.57, np.pi / 4))
 DT = 0.02
 env = envs.PandaPickCubeGymEnv(render_mode="human", action_scale=(0.1, 1))
 action_spec = env.action_space
@@ -170,11 +169,10 @@ def demo_motion_gen_single_segment(start_joint_state=None, goal_pose=None):
 
     return out
 
-def motion_gen_block():
-    obs, _ = env.reset()
+def motion_gen_block(x, y):
+    obs, _ = env.reset(x=x, y=y)
     block_pos = obs["state"]["block_pos"]
     block_quat = obs["state"]["block_quat"]
-    # breakpoint()
     goal_pose = np.concatenate([block_pos, block_quat])
     init_joint_state = obs["state"]["joint_pos"]
     start_time = time.perf_counter()
@@ -190,32 +188,33 @@ def motion_gen_block():
 counter = 0
 time_spend = []
 error_pos = []
-actions = motion_gen_block()
+actions = motion_gen_block(0, 0)
 # Create the viewer
 viewer = MujocoViewer(env.unwrapped.model, env.unwrapped.data)
 with viewer as viewer:
     start = time.time()
     while viewer.is_running():
-# while True: 
-        for i, cmd in enumerate(actions):
-            step_start = time.time()
-            obs, rew, terminated, truncated, info = env.step(cmd)
-            # print(obs)
-            viewer.sync()
-            time_until_next_step = env.control_dt - (time.time() - step_start)
-        if time_until_next_step > 0:
-            time.sleep(time_until_next_step)
-        if i >= len(actions) - 1:
-            block_pos = obs["state"]["block_pos"]
-            block_pos[2] += 0.1
-            ee_pos = obs["state"]["tcp_pose"][:3]
-            error = np.linalg.norm(block_pos - ee_pos)
-            print("error_pos: ", error)
-            error_pos.append(error)
-            actions = motion_gen_block()
-            counter += 1
-            if counter > 50:
-                print("time_spend: ", np.mean(time_spend), np.std(time_spend))
-                print("error_pos: ", np.mean(error_pos), np.std(error_pos))
-                break
+        for x in [0.25 * i for i in range(0, 5)]:
+            for y in [0.25 * i for i in range(0, 5)]:
+                for i, cmd in enumerate(actions):
+                    step_start = time.time()
+                    obs, rew, terminated, truncated, info = env.step(cmd)
+                    # print(obs)
+                    viewer.sync()
+                    time_until_next_step = env.control_dt - (time.time() - step_start)
+                if time_until_next_step > 0:
+                    time.sleep(time_until_next_step)
+                if i >= len(actions) - 1:
+                    block_pos = obs["state"]["block_pos"]
+                    block_pos[2] += 0.1
+                    ee_pos = obs["state"]["tcp_pose"][:3]
+                    error = np.linalg.norm(block_pos - ee_pos)
+                    print("error_pos: ", error)
+                    error_pos.append(error)
+                    actions = motion_gen_block(x, y)
+                    counter += 1
+                    if x == 4 and y == 4:
+                        print("time_spend: ", np.mean(time_spend), np.std(time_spend))
+                        print("error_pos: ", np.mean(error_pos), np.std(error_pos))
+                        break
 

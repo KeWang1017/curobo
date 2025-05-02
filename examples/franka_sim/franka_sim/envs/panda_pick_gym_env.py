@@ -42,7 +42,7 @@ _HERE = Path(__file__).parent
 _XML_PATH = _HERE / "xmls" / "arena.xml"
 _PANDA_HOME = np.asarray((0, -0.785, 0, -2.35, 0, 1.57, np.pi / 4))
 _CARTESIAN_BOUNDS = np.asarray([[0.2, -0.3, 0], [0.6, 0.3, 0.5]])
-_SAMPLING_BOUNDS = np.asarray([[0.15, -0.3], [0.65, 0.3]])
+_SAMPLING_BOUNDS = np.asarray([[0.2, -0.3], [0.6, 0.3]])
 
 
 class PandaPickCubeGymEnv(MujocoGymEnv):
@@ -165,8 +165,7 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
         )
         self._viewer.render()
 
-    def reset(
-        self, seed=None, **kwargs
+    def reset(self, seed=None, x=0, y=0, **kwargs
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
         """Reset the environment."""
         mujoco.mj_resetData(self._model, self._data)
@@ -180,7 +179,10 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
         self._data.mocap_pos[0] = tcp_pos
 
         # Sample a new block position.
-        block_xyz = np.random.uniform(*_SAMPLING_BOUNDS)
+        # block_xyz = np.random.uniform(*_SAMPLING_BOUNDS)
+        # get xy from x, y as porportional to sampling bounds
+        sample = np.array([x, y])
+        block_xyz = sample * (_SAMPLING_BOUNDS[1] - _SAMPLING_BOUNDS[0]) + _SAMPLING_BOUNDS[0]
         # self._block_z = np.random.uniform(0.1, 0.3)
         self._data.jnt("block").qpos[:3] = (*block_xyz, self._block_z)
         mujoco.mj_forward(self._model, self._data)
