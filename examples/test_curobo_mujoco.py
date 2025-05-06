@@ -9,7 +9,7 @@ from franka_sim import envs
 from franka_sim.utils.viewer_utils import MujocoViewer
 # Third Party
 import torch
-
+import os
 # CuRobo
 from curobo.geom.sdf.world import CollisionCheckerType
 from curobo.geom.types import Cuboid, WorldConfig
@@ -21,26 +21,48 @@ from curobo.util_file import get_robot_path, join_path, load_yaml
 from curobo.wrap.reacher.motion_gen import MotionGen, MotionGenConfig, MotionGenPlanConfig
 
 
-def plot_traj(trajectory, dt, file_name="test.png"):
+def plot_traj(trajectory, dt, file_name_1="test.png", file_name_2="test.png"):
     # Third Party
     import matplotlib.pyplot as plt
 
-    _, axs = plt.subplots(4, 1)
+    _, axs = plt.subplots(3, 1)
     q = trajectory.position.cpu().numpy()
     qd = trajectory.velocity.cpu().numpy()
     qdd = trajectory.acceleration.cpu().numpy()
     qddd = trajectory.jerk.cpu().numpy()
     timesteps = [i * dt for i in range(q.shape[0])]
+    joint_limits = robot_cfg.kinematics.get_joint_limits()
+    position_limits = joint_limits.position.cpu().numpy()
+    velocity_limits = joint_limits.velocity.cpu().numpy()
+    acceleration_limits = joint_limits.acceleration.cpu().numpy()
+    jerk_limits = joint_limits.jerk.cpu().numpy()
     for i in range(q.shape[-1]):
-        axs[0].plot(timesteps, q[:, i], label=str(i))
-        # add two lines to plot the joint limits
-        axs[0].plot([0, q.shape[0] * dt], [robot_cfg.joint_limits[0], robot_cfg.joint_limits[0]], "k--")
-        axs[1].plot(timesteps, qd[:, i], label=str(i))
-        axs[2].plot(timesteps, qdd[:, i], label=str(i))
-        axs[3].plot(timesteps, qddd[:, i], label=str(i))
+        # axs[0].plot(timesteps, q[:, i], label=str(i))
+        # # add two lines to plot the joint limits with different color
+        # axs[0].plot([0, q.shape[0] * dt], [position_limits[0, i], position_limits[0, i]], "k--", color="red")
+        # axs[0].plot([0, q.shape[0] * dt], [position_limits[1, i], position_limits[1, i]], "k--", color="blue")
+        axs[0].plot(timesteps, qd[:, i], label=str(i))
+        axs[0].plot([0, q.shape[0] * dt], [velocity_limits[0, i], velocity_limits[0, i]], "k--")
+        axs[0].plot([0, q.shape[0] * dt], [velocity_limits[1, i], velocity_limits[1, i]], "k--")
+        axs[1].plot(timesteps, qdd[:, i], label=str(i))
+        axs[1].plot([0, q.shape[0] * dt], [acceleration_limits[0, i], acceleration_limits[0, i]], "k--")
+        axs[1].plot([0, q.shape[0] * dt], [acceleration_limits[1, i], acceleration_limits[1, i]], "k--")
+        axs[2].plot(timesteps, qddd[:, i], label=str(i))
+        axs[2].plot([0, q.shape[0] * dt], [jerk_limits[0, i], jerk_limits[0, i]], "k--")
+        axs[2].plot([0, q.shape[0] * dt], [jerk_limits[1, i], jerk_limits[1, i]], "k--")
 
     plt.legend()
-    plt.savefig(file_name)
+
+    plt.savefig(os.path.join("plots", file_name_2))
+    plt.close()
+
+    _, axs = plt.subplots(q.shape[-1], 1)
+    for i in range(q.shape[-1]):
+        axs[i].plot(timesteps, q[:, i], label=str(i))
+        axs[i].plot([0, q.shape[0] * dt], [position_limits[0, i], position_limits[0, i]], "k--", color="red")
+        axs[i].plot([0, q.shape[0] * dt], [position_limits[1, i], position_limits[1, i]], "k--", color="blue")
+    plt.legend()
+    plt.savefig(os.path.join("plots", file_name_1))
     plt.close()
 
 DT = 0.02
@@ -52,7 +74,8 @@ world_file = "collision_table.yml"
 robot_file = "franka.yml"
 config_file = load_yaml(join_path(get_robot_path(), robot_file))["robot_cfg"]
 robot_cfg = RobotConfig.from_dict(config_file, tensor_args)
-breakpoint()
+# creat a folder to save the plots
+os.makedirs("plots", exist_ok=True)
 kin_model = CudaRobotModel(robot_cfg.kinematics)
 motion_gen_config = MotionGenConfig.load_from_robot_config(
     robot_file,
@@ -181,8 +204,9 @@ def motion_gen_block(x, y):
     start_time = time.perf_counter()
     task_space_traj, traj = demo_motion_gen_multi_segment(start_joint_state=init_joint_state, goal_pose=goal_pose)
     print("Time to generate trajectory: ", time.perf_counter() - start_time)
-    file_name = f"traj_{x}_{y}.png"
-    plot_traj(traj, DT, file_name)
+    file_name_1 = f"traj_{x}_{y}_pos.png"
+    file_name_2 = f"traj_{x}_{y}_vel.png"
+    plot_traj(traj, DT, file_name_1, file_name_2)
     time_spend.append(time.perf_counter() - start_time)
     pos = task_space_traj.ee_position.squeeze().cpu().numpy()
     quat = task_space_traj.ee_quaternion.squeeze().cpu().numpy()
