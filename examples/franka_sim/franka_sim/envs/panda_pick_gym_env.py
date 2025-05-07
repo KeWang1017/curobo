@@ -42,7 +42,7 @@ _HERE = Path(__file__).parent
 _XML_PATH = _HERE / "xmls" / "arena.xml"
 _PANDA_HOME = np.asarray((0, -0.785, 0, -2.35, 0, 1.57, np.pi / 4))
 _CARTESIAN_BOUNDS = np.asarray([[0.2, -0.3, 0], [0.6, 0.3, 0.5]])
-_SAMPLING_BOUNDS = np.asarray([[0.2, -0.3], [0.6, 0.3]])
+_SAMPLING_BOUNDS = np.asarray([[0.4, -0.3], [0.6, 0.3]])
 
 
 class PandaPickCubeGymEnv(MujocoGymEnv):

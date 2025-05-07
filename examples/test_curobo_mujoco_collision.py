@@ -19,6 +19,7 @@ from curobo.types.robot import JointState, RobotConfig
 from curobo.cuda_robot_model.cuda_robot_model import CudaRobotModel
 from curobo.util_file import get_robot_path, join_path, load_yaml
 from curobo.wrap.reacher.motion_gen import MotionGen, MotionGenConfig, MotionGenPlanConfig
+from curobo.wrap.model.robot_world import RobotWorld, RobotWorldConfig
 
 
 def plot_traj(trajectory, dt, file_name_1="test.png", file_name_2="test.png"):
@@ -59,8 +60,8 @@ def plot_traj(trajectory, dt, file_name_1="test.png", file_name_2="test.png"):
     _, axs = plt.subplots(q.shape[-1], 1)
     for i in range(q.shape[-1]):
         axs[i].plot(timesteps, q[:, i], label=str(i))
-        axs[i].plot([0, q.shape[0] * dt], [position_limits[0, i], position_limits[0, i]], "k--", color="red")
-        axs[i].plot([0, q.shape[0] * dt], [position_limits[1, i], position_limits[1, i]], "k--", color="blue")
+        axs[i].plot([0, q.shape[0] * dt], [position_limits[0, i], position_limits[0, i]], "k--")
+        axs[i].plot([0, q.shape[0] * dt], [position_limits[1, i], position_limits[1, i]], "k--")
     plt.legend()
     plt.savefig(os.path.join("plots", file_name_1))
     plt.close()
@@ -70,11 +71,13 @@ env = envs.PandaPickCubeGymEnv(render_mode="human", action_scale=(0.1, 1))
 action_spec = env.action_space
 # Standard Library
 tensor_args = TensorDeviceType()
-world_config = {
-    "cuboid": {
-        "cube_1": {"dims": [0.025, 0.025, 0.025], "pose": [0.2, 0.0, 0.25, 0, 0, 0, 1]}, # x, y, z, qx, qy, qz, qw       
-    }
-}
+# world_config = WorldConfig.from_dict({
+#     "cuboid": {
+#         "cube_1": {"dims": [0.015, 0.015, 0.5], "pose": [0.25, 0.0, 0.25, 0, 0, 0, 1]}, # x, y, z, qx, qy, qz, qw       
+#     }
+# })
+world_file = "collision_table.yml"
+collision_checker_type = CollisionCheckerType.PRIMITIVE
 robot_file = "franka.yml"
 config_file = load_yaml(join_path(get_robot_path(), robot_file))["robot_cfg"]
 robot_cfg = RobotConfig.from_dict(config_file, tensor_args)
@@ -83,16 +86,26 @@ os.makedirs("plots", exist_ok=True)
 kin_model = CudaRobotModel(robot_cfg.kinematics)
 motion_gen_config = MotionGenConfig.load_from_robot_config(
     robot_file,
-    world_config,
+    None,
+    world_file,
     tensor_args,
+    collision_checker_type=collision_checker_type,
+    collision_activation_distance=0.1,# important to set this to 0.1
     interpolation_dt=DT,
     velocity_scale=1.0, # used when generating slow trajectories
     # used for non-zero start velocity and acceleration
-    trajopt_tsteps = 36,
-    trajopt_dt = 0.05,
-    optimize_dt = False,
+    use_cuda_graph=True,
+    num_trajopt_seeds=30,
+    num_graph_seeds=30,
+    acceleration_scale=1.0,
+    self_collision_check=True,
+    maximum_trajectory_dt=0.25,
+    finetune_dt_scale=1.05,
+    fixed_iters_trajopt=True,
+    finetune_trajopt_iters=300,
+    minimize_jerk=True,
     # max_attemtps = 1,
-    trim_steps = [1, None]
+    # trim_steps = [1, None]
     # trajopt_dt=0.15,
     # velocity_scale=0.1,
     # collision_checker_type=CollisionCheckerType.PRIMITIVE,
@@ -104,78 +117,14 @@ motion_gen_config = MotionGenConfig.load_from_robot_config(
 
 motion_gen = MotionGen(motion_gen_config)
 motion_gen.warmup(parallel_finetune=True)
-
-def demo_motion_gen_multi_segment(start_joint_state=None, goal_pose=None):
-    start_state = JointState.from_position(
-        torch.tensor(start_joint_state).view(1, -1).cuda()
-    )
-    # make the goal state a bit higher than cube
-    goal_pose[2] += 0.1
-    start_pose = kin_model.get_state(torch.tensor(start_joint_state).view(1, -1).cuda())
-    # breakpoint()
-    intermediate_pose_1 =  np.concatenate([(start_pose.ee_position.squeeze().cpu().numpy() + goal_pose[:3]) / 2, goal_pose[3:]])# x, y, z, qw, qx, qy, qz
-    from copy import deepcopy
-    intermediate_pose_2 = deepcopy(goal_pose)
-    intermediate_pose_2[2] += 0.2
-
-    pose_list = [intermediate_pose_1, intermediate_pose_2,  goal_pose] # 
-    trajectory = start_state
-    for i, pose in enumerate(pose_list):
-        goal_pose = Pose.from_list(pose)  # x, y, z, qw, qx, qy, qz
-        start_state = trajectory[-1].unsqueeze(0).clone()
-        # start_state.velocity[:] = 0.0
-        # start_state.acceleration[:] = 0.0
-        result = motion_gen.plan_single(
-            start_state.clone(),
-            goal_pose,
-            plan_config=MotionGenPlanConfig(parallel_finetune=True, max_attempts=1, time_dilation_factor=1.0),
-        )
-        if result.success.item():
-            plan = result.get_interpolated_plan()
-            trajectory = trajectory.stack(plan.clone())
-            # motion_time += result.motion_time
-        else:
-            print(i, "fail", result.status)
-    
-    # goal_pose = Pose.from_list(goal_pose)  # x, y, z, qw, qx, qy, qz
-    # motion_gen.warmup(enable_graph=True, warmup_js_trajopt=js, parallel_finetune=True)
-    # robot_cfg = load_yaml(join_path(get_robot_configs_path(), robot_file))["robot_cfg"]
-    # robot_cfg = RobotConfig.from_dict(robot_cfg, tensor_args)
-    # breakpoint()
-    # goal_state = goal_pose
-    # result = motion_gen.plan_single(
-    #     start_state,
-    #     goal_state,
-    #     MotionGenPlanConfig(
-    #             max_attempts=1,
-    #             timeout=5,
-    #             time_dilation_factor=1.0,
-    #         ),
-    #     )
-    # retime the trajectory
-    # new_result = result.clone()
-    # new_result.retime_trajectory(0.8, create_interpolation_buffer=True)
-    # print(new_result.optimized_dt, new_result.motion_time, result.motion_time)
-    # print(
-    #     "Trajectory Generated: ",
-    #     result.success,
-    #     result.solve_time,
-    #     result.status,
-    #     result.optimized_dt,
-    # )
-    # traj = result.get_interpolated_plan()
-    print(trajectory.position.shape[0])
-    q = torch.tensor(trajectory.position, **(tensor_args.as_torch_dict()))
-    task_space_traj = kin_model.get_state(q)
-
-    return task_space_traj, trajectory 
-
+world_model = motion_gen.world_collision
+# breakpoint()
 def demo_motion_gen_single_segment(start_joint_state=None, goal_pose=None):
     start_state = JointState.from_position(
         torch.tensor(start_joint_state).view(1, -1).cuda()
     )
     # make the goal state a bit higher than cube
-    goal_pose[2] += 0.1
+    goal_pose[2] += 0.025
     goal_pose = Pose.from_list(goal_pose)
     start_pose = kin_model.get_state(torch.tensor(start_joint_state).view(1, -1).cuda())
     # motion_gen.warmup(enable_graph=True, warmup_js_trajopt=js, parallel_finetune=True)
@@ -186,11 +135,15 @@ def demo_motion_gen_single_segment(start_joint_state=None, goal_pose=None):
         start_state,
         goal_pose,
         MotionGenPlanConfig(
-            max_attempts=1,
+            enable_graph=False,
+            enable_graph_attempt=4,
+            max_attempts=2,
+            enable_finetune_trajopt=True,
             timeout=5,
             time_dilation_factor=1.0,
         ),
     )
+    print(result.success)
     traj = result.get_interpolated_plan()
     q = torch.tensor(traj.position, **(tensor_args.as_torch_dict()))
     task_space_traj = kin_model.get_state(q)
@@ -204,7 +157,7 @@ def motion_gen_block(x, y):
     goal_pose = np.concatenate([block_pos, block_quat])
     init_joint_state = obs["state"]["joint_pos"]
     start_time = time.perf_counter()
-    task_space_traj, traj = demo_motion_gen_multi_segment(start_joint_state=init_joint_state, goal_pose=goal_pose)
+    task_space_traj, traj = demo_motion_gen_single_segment(start_joint_state=init_joint_state, goal_pose=goal_pose)
     time_spend.append(time.perf_counter() - start_time)
     print("Time to generate trajectory: ", time.perf_counter() - start_time)
     file_name_1 = f"traj_{x}_{y}_pos.png"
