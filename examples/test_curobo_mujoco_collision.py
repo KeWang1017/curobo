@@ -86,7 +86,6 @@ os.makedirs("plots", exist_ok=True)
 kin_model = CudaRobotModel(robot_cfg.kinematics)
 motion_gen_config = MotionGenConfig.load_from_robot_config(
     robot_file,
-    None,
     world_file,
     tensor_args,
     collision_checker_type=collision_checker_type,
@@ -95,8 +94,8 @@ motion_gen_config = MotionGenConfig.load_from_robot_config(
     velocity_scale=1.0, # used when generating slow trajectories
     # used for non-zero start velocity and acceleration
     use_cuda_graph=True,
-    num_trajopt_seeds=30,
-    num_graph_seeds=30,
+    num_trajopt_seeds=12,
+    num_graph_seeds=12,
     acceleration_scale=1.0,
     self_collision_check=True,
     maximum_trajectory_dt=0.25,
